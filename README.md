@@ -3,6 +3,7 @@ Code and data availability for the paper entitled, "Is drought protection possib
 
 The reservoir data (stored as a MATLAB cell array of objects) can be downloaded at the following link:
 https://1drv.ms/u/c/4f2682a81239ef03/EdkKO_0maxJAs6dfJ-jK7IYBBweiQSr8kQrXeeI_89Tyfw?e=JenkDn
+(Alternatively, try this DOI: 10.35097/bRpwFBSdUxSzPdfr)
 
 In order to properly load the reservoir data, the classdef file hrb.m must be added to the path. This file also contains most of the functions needed for the model:
   - calcMinFlow          - calculates Q70 (and additionally Q80 and Q95)
