@@ -9,6 +9,9 @@ for i=1:size(allReservoirs,1)
 
     obj = allReservoirs{i,1};
 
+    % apply area ratio to LARSIM Qin
+    obj.qin.Q = obj.qin_d.Q*area_ratio(i,1);
+
     obj = calcMinFlow(obj);
     saveName = strcat(saveFolder,obj.hrbName,'_minFlow.fig');
     savefig(saveName);
