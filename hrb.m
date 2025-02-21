@@ -17,9 +17,11 @@ classdef hrb
         rf              % Rueckhaltefaktor (storage factor, SF) based on Q70 and Qin
         rf_d            % originally estimated Rueckhaltefaktor [-] (if applicable) ((MQ-MNQ)/V)
         rf_d_p          % Rueckhaltefaktor percentile (out of all in class_id, based on rf_d)
+        area_ratio      % LARSIM catchment area / estimated area; for scaling qin
         
         % time series
-        qin             % qin time series; from LARSIM
+        qin             % qin_d * area_ratio
+        qin_d           % qin time series; from LARSIM
         qd              % Hourly minimum flow (365 days); calculated from qin
         qd_ts           % Hourly minimum flow as a time series matching qin
         v               % volume [1000 m3] time series; calculated from operation
@@ -498,13 +500,17 @@ classdef hrb
             
             dpF = pF - pF_d;
             dpD = pD - pD_d;
+
+            % 25.01.02: omit the first year of data by changing to NaN
+            dpD(1:8760) = nan;
+            dpF(1:8760) = nan;
             
             % benefit = reduction in penalty
-            benD = sum(dpD);
+            benD = sum(dpD,'omitnan');
             
             % check that d(flood penalty) = 0 at all time steps (avoids
             % cross-compensation)
-            if isempty(find(dpF~=0))
+            if isempty(find(dpF(8761:end)~=0))
                 maintF = 'true';
             else
                 maintF = 'false';
@@ -525,10 +531,8 @@ classdef hrb
             pF(Qout<=Qr_d) = 0;
             
             % catch all to avoid -inf
-                % 24.07.05: edited fringe condition to be equal to the
-                % penalty at min(qd_ts)/4
-                % previous: minQ = 0.001 m^/s
-            minQ = min(qd_ts)/4;
+                % minQ = 0.00001 m^/s
+            minQ = 0.00001;
             pD = Qout;
             pD(pD<minQ) = minQ;
             pD = -1./sqrt(pD)+1./sqrt(qd);
@@ -577,10 +581,14 @@ classdef hrb
             
                     dv = 3.6*(qin(t)-Qrd);            % incoming (+) volume [1000 m3]
                     
+                    % if there is more freeboard than the incoming volume,
+                    % impound everything
                     if dv < (C - V(t-1))
                         Qout(t,1) = Qrd;
                         V(t) = V(t-1) + dv;
                     else
+                        % if there's not enough volume for the full wave,
+                        % only impound the the remaining freeboard
                         Qout(t,1) = qin(t) - (C - V(t-1))/3.6;
                         V(t) = C;
                     end
@@ -621,13 +629,18 @@ classdef hrb
 
                             dv = 3.6*(Qrd - qin(t));            % outgoing (+) volume [1000 m3]
 
+                            % if the reservoir is empty, keep it empty
                             if V(t-1) == 0
                                 Qout(t,1) = qin(t);
                                 V(t) = V(t-1);
+                            % if there is volume, release the maximum value
+                            % of what can be released
                             elseif dv < V(t-1)
                                 Qout(t,1) = Qrd;
                                 V(t) = V(t-1) - dv;
                             else
+                                % if there is volume, but dv > V(t-1) and
+                                % V(t-1) > 0, release what remains
                                 if dv > 0
                                     Qout(t,1) = qin(t) + V(t-1)/3.6;
                                     V(t) = 0;
@@ -660,18 +673,25 @@ classdef hrb
 
                         dv = 3.6*(qd(t,1) - qin(t));      % outgoing (+) volume [1000 m3]
 
-                        if dv < V(t-1)
+                        % if the reservoir has more than the needed volume,
+                        % release all necessary volume
+                        if dv < V(t-1)      
                             Qout(t,1) = qd(t,1);
                             V(t) = V(t-1) - dv;
                         else
-                            if dv < 0
-                                Qout = qin(t) + dv/3.6;
-                                V(t) = 0;
-                            else    % failed drought release (code: 6)
+                            % if the reservoir is empty, the drought
+                            % release fails
+                            if V(t-1) == 0 % failed drought release (code: 6)
                                 Qout(t,1) = qin(t);
                                 V(t) = 0;
                                 modTS(t) = 6;
-                            end
+                            % if the reservoir only has part of the needed
+                            % volume (i.e. dv > V(t-1) and V(t-1) > 0),
+                            % then release what remains
+                            else
+                                Qout(t,1) = qin(t) + V(t-1)/3.6;
+                                V(t) = 0;
+                            end    
                         end
 
                         % tracks how much water has been released for drought (single time step)
@@ -754,13 +774,13 @@ classdef hrb
             title(t1,'Discharge');
             hold on
             q_in = plot(qin.time,qin.Q,'Color','#BABABA');
-            q_out = plot(qin.time,discharge,'Color',"#0072BD",'LineStyle','--');
+            q_out = plot(qin.time,discharge,'Color',"#0072BD");
             q_d = plot(qin.time,qd,'Color',"red",'LineStyle','--');
             q_rd = yline(obj.Qr_d,'Color',"red");
             q_r = yline(Qr);
             ylabel('Discharge [m^3/s]');
             legendNames = {"Inflow","Outflow","Drought Threshold","Qcrit","Retention Flow (Qr)"};
-            legend(legendNames);
+            legend(t1,legendNames,'Orientation','horizontal','Location','southoutside');
             
             
             t2 = nexttile;
@@ -773,7 +793,7 @@ classdef hrb
             plot(qin.time,vflood,'Color',"#D95319",'LineStyle','--')
             ylabel('Release Volume [1000 cbm]');
             legendNames = {"Reservoir Volume","","Cumulative Drought Release Volume","Cumulative Pre-Flood Release Volume"};
-            legend(legendNames);
+            legend(t2,legendNames,'Orientation','horizontal','Location','southoutside');
             title(t2,'Volume');
             
             t3 = nexttile;
@@ -785,11 +805,13 @@ classdef hrb
             plot(qin.time,pF_d,'Color','#BABABA')
             plot(qin.time,pF,'Color',"#D95319",'LineStyle','--');
             legendNames = {"Default Drought Penalty","Drought Penalty (Qr)","Default Flood Penalty","Flood Penalty (Qr)"};
-            legend(legendNames);
+            legend(t3,legendNames,'Orientation','horizontal','Location','southoutside');
             ylabel('Flood Penalty [-]')
             title(t3,'Penalty')
             
             linkaxes([t1 t2 t3],'x')
+
+            xlim([qin.time(8761) qin.time(end)])
             
         end
 
@@ -846,20 +868,23 @@ classdef hrb
 
         % Calculate base statistics for cross-reservoir analysis
         function obj = calcBaseStats(obj)
+            % 2025.01.24: cutting the first year (8760 time steps) of each
+            % time series
+
             % n = natural; m = modified (flood-only); o = optimized (flood / drought)
             Qr_d = obj.Qr_d;
-            qin = obj.qin.Q;
+            qin = obj.qin.Q(8761:end,:);
             results = obj.results;
-            qout_m = obj.qout_od;
-            qout_o = results{2,2}.Qout;
-            qd = obj.qd_ts.Q70;
-            pD_d = obj.pD_d;
-            pF_d = obj.pF_d;
-            pD_o = results{3,2}{:,2};
-            pF_o = results{3,2}{:,1};
-            modTS = results{2,2}.modTS;
-            v_m = obj.v_od;
-            v_o = results{2,2}{:,2};
+            qout_m = obj.qout_od(8761:end,:);
+            qout_o = results{2,2}.Qout(8761:end,:);
+            qd = obj.qd_ts.Q70(8761:end,:);
+            pD_d = obj.pD_d(8761:end,:);
+            pF_d = obj.pF_d(8761:end,:);
+            pD_o = results{3,2}{:,2}(8761:end,:);
+            pF_o = results{3,2}{:,1}(8761:end,:);
+            modTS = results{2,2}.modTS(8761:end,:);
+            v_m = obj.v_od(8761:end,:);
+            v_o = results{2,2}{:,2}(8761:end,:);
             
             % characterization
             timesteps = zeros(6,1);
@@ -903,7 +928,7 @@ classdef hrb
             % penalty
             pF_n = -5*(f_n-Qr_d);
             pD_n = -1./sqrt(d_n)+1./sqrt(qd(d_n_ts));
-            pD_n(d_n<0.001)=-1./sqrt(0.001)+1./sqrt(qd(d_n<0.001));
+            pD_n(d_n<0.00001)=-1./sqrt(0.00001)+1./sqrt(qd(d_n<0.00001));
             
             pen(1,1) = sum(pF_n);
             pen(2,1) = sum(pD_n);
